@@ -1,0 +1,10 @@
+{
+  "name": "com.vex.inspector",
+  "version": "0.1.0",
+  "displayName": "Vex Inspector",
+  "description": "Editor-only tools for inspecting the editor itself. Lets an AI (via unity-cli) capture a rendered EditorWindow to a PNG so it can see and understand what's on screen — the Inspector, the Essence Inspector, the Console, any window that the camera-based screenshot can't reach.",
+  "unity": "6000.0",
+  "author": {
+    "name": "Vex"
+  }
+}
