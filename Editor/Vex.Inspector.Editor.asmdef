@@ -2,7 +2,8 @@
   "name": "Vex.Inspector.Editor",
   "rootNamespace": "Vex.Inspector.Editor",
   "references": [
-    "UnityCliConnector.Editor"
+    "UnityCliConnector.Editor",
+    "Unity.Timeline"
   ],
   "includePlatforms": [
     "Editor"
