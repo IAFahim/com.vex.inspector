@@ -179,11 +179,28 @@ namespace Vex.Inspector.Editor
                     var x = pos.x * ppp;
                     var y = (Screen.currentResolution.height) - ((pos.y + pos.height) * ppp);
                     var pixels = (Color[])read.Invoke(null, new object[] { new Vector2(x, y), width, height });
-                    var tex = new Texture2D(width, height, TextureFormat.RGB24, false);
-                    tex.SetPixels(pixels);
-                    tex.Apply();
-                    File.WriteAllBytes(path, tex.EncodeToPNG());
-                    Object.DestroyImmediate(tex);
+                    Texture2D tex = null;
+                    try
+                    {
+                        tex = new Texture2D(width, height, TextureFormat.RGB24, false);
+                        tex.SetPixels(pixels);
+                        tex.Apply();
+                        var png = tex.EncodeToPNG();
+                        if (png == null)
+                        {
+                            throw new Exception("EncodeToPNG returned null");
+                        }
+
+                        File.WriteAllBytes(path, png);
+                    }
+                    finally
+                    {
+                        if (tex != null)
+                        {
+                            Object.DestroyImmediate(tex);
+                        }
+                    }
+
                     return true;
                 }
             }
@@ -200,12 +217,29 @@ namespace Vex.Inspector.Editor
         {
             var prev = RenderTexture.active;
             RenderTexture.active = rt;
-            var tex = new Texture2D(width, height, TextureFormat.RGB24, false);
-            tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-            tex.Apply();
-            File.WriteAllBytes(path, tex.EncodeToPNG());
-            Object.DestroyImmediate(tex);
-            RenderTexture.active = prev;
+            Texture2D tex = null;
+            try
+            {
+                tex = new Texture2D(width, height, TextureFormat.RGB24, false);
+                tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                tex.Apply();
+                var png = tex.EncodeToPNG();
+                if (png == null)
+                {
+                    throw new Exception("EncodeToPNG returned null");
+                }
+
+                File.WriteAllBytes(path, png);
+            }
+            finally
+            {
+                if (tex != null)
+                {
+                    Object.DestroyImmediate(tex);
+                }
+
+                RenderTexture.active = prev;
+            }
         }
     }
 }
