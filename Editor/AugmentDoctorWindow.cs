@@ -1,33 +1,77 @@
-// <copyright file="AugmentDoctorWindow.cs" company="Vex">
-//     Copyright (c) Vex. All rights reserved.
-// </copyright>
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using UnityEditor;
+using UnityEngine;
 
 namespace Vex.Inspector.Editor
 {
-    using System;
-    using System.Collections.Generic;
-    using System.IO;
-    using System.Linq;
-    using UnityEditor;
-    using UnityEngine;
     using Object = UnityEngine.Object;
 
-    /// <summary>
-    /// The designer-facing "Augment Doctor" panel (DESIGNER_TOOLING_PLAN.md, P0). Read-only, modelled on the
-    /// Essence Inspector: it scans the open scenes and lists every silent-failure trap as a finding with a
-    /// one-click fix. Goes green when the augment is correctly wired — which serves both designer styles at once:
-    /// Efarjeon's "is this correct?" checklist and NIbir888's "how do I repair it?" playbook.
-    /// </summary>
     public sealed class AugmentDoctorWindow : EditorWindow
     {
         private static readonly Color ErrorColor = new(1f, 0.5f, 0.45f);
         private static readonly Color WarnColor = new(1f, 0.85f, 0.4f);
         private static readonly Color OkColor = new(0.5f, 0.9f, 0.55f);
+        private bool autoRescan = true;
 
         private AugmentScan scan;
         private Vector2 scroll;
-        private bool autoRescan = true;
         private GUIStyle wrap;
+
+        public static string ReportPath =>
+            System.IO.Path.Combine(Directory.GetParent(Application.dataPath)!.FullName, "Library",
+                "augment-doctor.json");
+
+        private void OnEnable()
+        {
+            EditorApplication.hierarchyChanged += OnHierarchyChanged;
+            Rescan();
+        }
+
+        private void OnDisable()
+        {
+            EditorApplication.hierarchyChanged -= OnHierarchyChanged;
+        }
+
+        private void OnGUI()
+        {
+            wrap ??= new GUIStyle(EditorStyles.label) { wordWrap = true };
+
+            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
+            {
+                if (GUILayout.Button("Rescan", EditorStyles.toolbarButton, GUILayout.Width(70))) Rescan();
+
+                if (GUILayout.Button("Export", EditorStyles.toolbarButton, GUILayout.Width(60))) ExportJson();
+
+                GUILayout.FlexibleSpace();
+                autoRescan = GUILayout.Toggle(autoRescan, "Auto", EditorStyles.toolbarButton, GUILayout.Width(50));
+            }
+
+            if (scan == null) Rescan();
+
+            var findings = scan.Findings;
+            if (findings.Count == 0)
+            {
+                DrawAllClear();
+                return;
+            }
+
+            DrawSummary(findings);
+
+            scroll = EditorGUILayout.BeginScrollView(scroll);
+
+            foreach (var group in findings.GroupBy(f => f.Subject).OrderBy(g => Path(g.Key)))
+                DrawGroup(group.Key, group.ToList());
+
+            EditorGUILayout.EndScrollView();
+        }
+
+        private void OnFocus()
+        {
+            Rescan();
+        }
 
         [MenuItem("Vex/Augment Doctor")]
         private static void Open()
@@ -39,80 +83,18 @@ namespace Vex.Inspector.Editor
             window.Show();
         }
 
-        private void OnEnable()
-        {
-            EditorApplication.hierarchyChanged += this.OnHierarchyChanged;
-            this.Rescan();
-        }
-
-        private void OnDisable()
-        {
-            EditorApplication.hierarchyChanged -= this.OnHierarchyChanged;
-        }
-
-        private void OnFocus()
-        {
-            // Re-validate when the designer comes back to the panel — cheap and keeps it honest.
-            this.Rescan();
-        }
-
         private void OnHierarchyChanged()
         {
-            if (this.autoRescan)
+            if (autoRescan)
             {
-                this.Rescan();
-                this.Repaint();
+                Rescan();
+                Repaint();
             }
         }
 
         private void Rescan()
         {
-            this.scan = AugmentDoctor.Scan();
-        }
-
-        private void OnGUI()
-        {
-            this.wrap ??= new GUIStyle(EditorStyles.label) { wordWrap = true };
-
-            using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
-            {
-                if (GUILayout.Button("Rescan", EditorStyles.toolbarButton, GUILayout.Width(70)))
-                {
-                    this.Rescan();
-                }
-
-                if (GUILayout.Button("Export", EditorStyles.toolbarButton, GUILayout.Width(60)))
-                {
-                    this.ExportJson();
-                }
-
-                GUILayout.FlexibleSpace();
-                this.autoRescan = GUILayout.Toggle(this.autoRescan, "Auto", EditorStyles.toolbarButton, GUILayout.Width(50));
-            }
-
-            if (this.scan == null)
-            {
-                this.Rescan();
-            }
-
-            var findings = this.scan.Findings;
-            if (findings.Count == 0)
-            {
-                this.DrawAllClear();
-                return;
-            }
-
-            this.DrawSummary(findings);
-
-            this.scroll = EditorGUILayout.BeginScrollView(this.scroll);
-
-            // Group by subject so a designer sees all problems on one object together.
-            foreach (var group in findings.GroupBy(f => f.Subject).OrderBy(g => Path(g.Key)))
-            {
-                this.DrawGroup(group.Key, group.ToList());
-            }
-
-            EditorGUILayout.EndScrollView();
+            scan = AugmentDoctor.Scan();
         }
 
         private void DrawAllClear()
@@ -124,7 +106,8 @@ namespace Vex.Inspector.Editor
             GUILayout.Label("✓  No problems found", centered);
             GUI.color = prev;
             var sub = new GUIStyle(EditorStyles.miniLabel) { alignment = TextAnchor.MiddleCenter, wordWrap = true };
-            GUILayout.Label($"Checked {this.scan.Tracks.Count} tracks across {this.scan.DirectorCount} directors in the open scenes.", sub);
+            GUILayout.Label(
+                $"Checked {scan.Tracks.Count} tracks across {scan.DirectorCount} directors in the open scenes.", sub);
         }
 
         private void DrawSummary(List<AugmentFinding> findings)
@@ -132,7 +115,7 @@ namespace Vex.Inspector.Editor
             var errors = findings.Count(f => f.Severity == AugmentFinding.Sev.Error);
             var warnings = findings.Count - errors;
             EditorGUILayout.HelpBox(
-                $"{errors} error(s), {warnings} warning(s) across {this.scan.DirectorCount} directors. Fix the errors — those mechanics will not work.",
+                $"{errors} error(s), {warnings} warning(s) across {scan.DirectorCount} directors. Fix the errors — those mechanics will not work.",
                 errors > 0 ? MessageType.Error : MessageType.Warning);
         }
 
@@ -144,15 +127,10 @@ namespace Vex.Inspector.Editor
                 {
                     EditorGUILayout.LabelField(Path(subject), EditorStyles.boldLabel);
                     if (subject != null && GUILayout.Button("Ping", EditorStyles.miniButton, GUILayout.Width(50)))
-                    {
                         Ping(subject);
-                    }
                 }
 
-                foreach (var finding in group)
-                {
-                    this.DrawFinding(finding);
-                }
+                foreach (var finding in group) DrawFinding(finding);
             }
         }
 
@@ -165,42 +143,33 @@ namespace Vex.Inspector.Editor
                 GUILayout.Label(finding.Severity == AugmentFinding.Sev.Error ? "✗" : "▲", GUILayout.Width(16));
                 GUI.color = prev;
 
-                GUILayout.Label(finding.Message, this.wrap);
+                GUILayout.Label(finding.Message, wrap);
 
                 if (finding.Fix != null && !string.IsNullOrEmpty(finding.FixLabel))
-                {
                     if (GUILayout.Button(finding.FixLabel, EditorStyles.miniButton, GUILayout.Width(140)))
                     {
                         finding.Fix();
-                        this.Rescan();
+                        Rescan();
                     }
-                }
             }
         }
 
-        /// <summary> The on-disk path the JSON report is written to (under Library, per-machine, gitignored). </summary>
-        public static string ReportPath =>
-            System.IO.Path.Combine(Directory.GetParent(Application.dataPath)!.FullName, "Library", "augment-doctor.json");
-
-        // P3-3 (assistant coherence): dump findings as machine-readable JSON so the Codex assistant can read the
-        // exact finding list (via WindowCaptureTool's sibling tools) instead of OCR'ing a screenshot. The Doctor
-        // becomes the shared source of truth between designer, inspector, and assistant.
         private void ExportJson()
         {
-            var items = this.scan.Findings.Select(f => new ReportItem
+            var items = scan.Findings.Select(f => new ReportItem
             {
                 severity = f.Severity.ToString(),
                 subject = Path(f.Subject),
                 message = f.Message,
-                hasFix = f.Fix != null,
+                hasFix = f.Fix != null
             }).ToArray();
 
             var report = new Report
             {
                 generatedAt = DateTime.Now.ToString("s"),
-                directorCount = this.scan.DirectorCount,
-                trackCount = this.scan.Tracks.Count,
-                findings = items,
+                directorCount = scan.DirectorCount,
+                trackCount = scan.Tracks.Count,
+                findings = items
             };
 
             File.WriteAllText(ReportPath, JsonUtility.ToJson(report, true));
@@ -209,37 +178,25 @@ namespace Vex.Inspector.Editor
 
         private static string Path(Object subject)
         {
-            if (subject == null)
-            {
-                return "(project)";
-            }
+            if (subject == null) return "(project)";
 
             var go = subject as GameObject ?? (subject as Component)?.gameObject;
-            if (go == null)
-            {
-                return subject.name;
-            }
+            if (go == null) return subject.name;
 
             var stack = new Stack<string>();
-            for (var t = go.transform; t != null; t = t.parent)
-            {
-                stack.Push(t.name);
-            }
+            for (var t = go.transform; t != null; t = t.parent) stack.Push(t.name);
 
             return string.Join("/", stack);
         }
 
         private static void Ping(Object subject)
         {
-            // Guarded: PingObject can throw on SubScene/Timeline-preview objects; never touch Selection (it defers
-            // a Hierarchy frame that throws asynchronously and escapes try/catch).
             try
             {
                 EditorGUIUtility.PingObject(subject);
             }
             catch
             {
-                // ignored
             }
         }
 

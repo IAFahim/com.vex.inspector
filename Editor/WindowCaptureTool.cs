@@ -1,44 +1,23 @@
-// <copyright file="WindowCaptureTool.cs" company="Vex">
-//     Copyright (c) Vex. All rights reserved.
-// </copyright>
+using System;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using Newtonsoft.Json.Linq;
+using UnityCliConnector;
+using UnityEditor;
+using UnityEngine;
 
 namespace Vex.Inspector.Editor
 {
-    using System;
-    using System.IO;
-    using System.Linq;
-    using System.Reflection;
-    using Newtonsoft.Json.Linq;
-    using UnityCliConnector;
-    using UnityEditor;
-    using UnityEngine;
     using Object = UnityEngine.Object;
 
-    /// <summary>
-    /// unity-cli tool that captures a rendered <see cref="EditorWindow" /> to a PNG, so an AI can actually see what's
-    /// on screen — the Inspector, the Essence Inspector, the Console, anything the camera-based `screenshot` can't
-    /// reach. Capture is done by rendering the window's view (`GUIView.GrabPixels` via reflection), with a
-    /// screen-read fallback. Pass <c>window=&lt;title or type substring&gt;</c>, or <c>list=true</c> to enumerate
-    /// the open windows first.
-    /// </summary>
     [UnityCliTool(
         Name = "window_capture",
         Group = "vex",
-        Description = "Capture a rendered EditorWindow to a PNG (so an AI can see it). Params: window=<title or type substring, case-insensitive>; or list=true to list open windows; output_path optional.")]
+        Description =
+            "Capture a rendered EditorWindow to a PNG (so an AI can see it). Params: window=<title or type substring, case-insensitive>; or list=true to list open windows; output_path optional.")]
     public static class WindowCaptureTool
     {
-        public class Parameters
-        {
-            [ToolParameter("Window title or type-name substring to capture (e.g. 'Inspector', 'Essence', 'Console'). Case-insensitive.", Required = false)]
-            public string Window { get; set; }
-
-            [ToolParameter("If true, list all open editor windows (title + type + size) instead of capturing.", Required = false)]
-            public bool List { get; set; }
-
-            [ToolParameter("Output PNG path, absolute or relative to project root (default Screenshots/window.png).", Required = false)]
-            public string OutputPath { get; set; }
-        }
-
         public static object HandleCommand(JObject @params)
         {
             @params ??= new JObject();
@@ -54,7 +33,7 @@ namespace Vex.Inspector.Editor
                         title = w.titleContent != null ? w.titleContent.text : string.Empty,
                         type = w.GetType().FullName,
                         width = Mathf.RoundToInt(w.position.width),
-                        height = Mathf.RoundToInt(w.position.height),
+                        height = Mathf.RoundToInt(w.position.height)
                     })
                     .ToList();
                 return new SuccessResponse($"{listed.Count} open editor window(s).", new { windows = listed });
@@ -62,37 +41,33 @@ namespace Vex.Inspector.Editor
 
             var query = p.Get("window");
             if (string.IsNullOrEmpty(query))
-            {
-                return new ErrorResponse("Specify 'window' (title or type substring), or pass list=true to see open windows.");
-            }
+                return new ErrorResponse(
+                    "Specify 'window' (title or type substring), or pass list=true to see open windows.");
 
             var match = windows.FirstOrDefault(w => Matches(w, query));
             if (match == null)
-            {
                 return new ErrorResponse($"No open editor window matches '{query}'. Pass list=true to see options.");
-            }
 
             var outputPath = ResolveOutputPath(p.Get("output_path"));
 
             try
             {
                 var dir = Path.GetDirectoryName(outputPath);
-                if (!string.IsNullOrEmpty(dir))
-                {
-                    Directory.CreateDirectory(dir);
-                }
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
                 match.Focus();
                 match.Repaint();
 
                 if (!TryCapture(match, outputPath, out var width, out var height, out var error))
-                {
                     return new ErrorResponse($"Could not capture '{match.titleContent?.text}': {error}");
-                }
 
                 return new SuccessResponse(
                     $"Captured '{match.titleContent?.text}' ({match.GetType().Name}) -> {outputPath}",
-                    new { path = outputPath, width, height, window = match.titleContent?.text, type = match.GetType().FullName });
+                    new
+                    {
+                        path = outputPath, width, height, window = match.titleContent?.text,
+                        type = match.GetType().FullName
+                    });
             }
             catch (Exception e)
             {
@@ -111,33 +86,26 @@ namespace Vex.Inspector.Editor
 
         private static string ResolveOutputPath(string userPath)
         {
-            if (string.IsNullOrEmpty(userPath))
-            {
-                userPath = "Screenshots/window.png";
-            }
+            if (string.IsNullOrEmpty(userPath)) userPath = "Screenshots/window.png";
 
-            if (Path.IsPathRooted(userPath))
-            {
-                return Path.GetFullPath(userPath);
-            }
+            if (Path.IsPathRooted(userPath)) return Path.GetFullPath(userPath);
 
             var projectRoot = Path.GetDirectoryName(Application.dataPath);
             return Path.GetFullPath(Path.Combine(projectRoot, userPath));
         }
 
-        // Render the window's view to a PNG. Primary: GUIView.GrabPixels (renders the view, works even if occluded).
-        // Fallback: InternalEditorUtility.ReadScreenPixel (reads the OS framebuffer at the window's screen rect).
-        private static bool TryCapture(EditorWindow window, string path, out int width, out int height, out string error)
+        private static bool TryCapture(EditorWindow window, string path, out int width, out int height,
+            out string error)
         {
             error = null;
             var ppp = EditorGUIUtility.pixelsPerPoint;
             width = Mathf.Max(1, Mathf.RoundToInt(window.position.width * ppp));
             height = Mathf.Max(1, Mathf.RoundToInt(window.position.height * ppp));
 
-            // Primary: GrabPixels on the window's backing GUIView (EditorWindow.m_Parent).
             try
             {
-                var parentField = typeof(EditorWindow).GetField("m_Parent", BindingFlags.NonPublic | BindingFlags.Instance);
+                var parentField =
+                    typeof(EditorWindow).GetField("m_Parent", BindingFlags.NonPublic | BindingFlags.Instance);
                 var parent = parentField?.GetValue(window);
                 var grab = parent?.GetType().GetMethod(
                     "GrabPixels",
@@ -168,7 +136,6 @@ namespace Vex.Inspector.Editor
                 error = "GrabPixels: " + e.Message;
             }
 
-            // Fallback: read the screen framebuffer at the window's rect (bottom-left origin).
             try
             {
                 var read = typeof(EditorWindow).Assembly.GetType("UnityEditorInternal.InternalEditorUtility")
@@ -177,7 +144,7 @@ namespace Vex.Inspector.Editor
                 {
                     var pos = window.position;
                     var x = pos.x * ppp;
-                    var y = (Screen.currentResolution.height) - ((pos.y + pos.height) * ppp);
+                    var y = Screen.currentResolution.height - (pos.y + pos.height) * ppp;
                     var pixels = (Color[])read.Invoke(null, new object[] { new Vector2(x, y), width, height });
                     Texture2D tex = null;
                     try
@@ -186,19 +153,13 @@ namespace Vex.Inspector.Editor
                         tex.SetPixels(pixels);
                         tex.Apply();
                         var png = tex.EncodeToPNG();
-                        if (png == null)
-                        {
-                            throw new Exception("EncodeToPNG returned null");
-                        }
+                        if (png == null) throw new Exception("EncodeToPNG returned null");
 
                         File.WriteAllBytes(path, png);
                     }
                     finally
                     {
-                        if (tex != null)
-                        {
-                            Object.DestroyImmediate(tex);
-                        }
+                        if (tex != null) Object.DestroyImmediate(tex);
                     }
 
                     return true;
@@ -224,22 +185,32 @@ namespace Vex.Inspector.Editor
                 tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
                 tex.Apply();
                 var png = tex.EncodeToPNG();
-                if (png == null)
-                {
-                    throw new Exception("EncodeToPNG returned null");
-                }
+                if (png == null) throw new Exception("EncodeToPNG returned null");
 
                 File.WriteAllBytes(path, png);
             }
             finally
             {
-                if (tex != null)
-                {
-                    Object.DestroyImmediate(tex);
-                }
+                if (tex != null) Object.DestroyImmediate(tex);
 
                 RenderTexture.active = prev;
             }
+        }
+
+        public class Parameters
+        {
+            [ToolParameter(
+                "Window title or type-name substring to capture (e.g. 'Inspector', 'Essence', 'Console'). Case-insensitive.",
+                Required = false)]
+            public string Window { get; set; }
+
+            [ToolParameter("If true, list all open editor windows (title + type + size) instead of capturing.",
+                Required = false)]
+            public bool List { get; set; }
+
+            [ToolParameter("Output PNG path, absolute or relative to project root (default Screenshots/window.png).",
+                Required = false)]
+            public string OutputPath { get; set; }
         }
     }
 }
