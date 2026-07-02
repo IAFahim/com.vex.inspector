@@ -68,9 +68,30 @@ namespace Vex.Inspector.Editor
             EditorGUILayout.EndScrollView();
         }
 
+        private bool pendingRescan;
+
         private void OnFocus()
         {
-            Rescan();
+            if (autoRescan)
+                ScheduleRescan();
+        }
+
+        // Coalesce bursts of hierarchy/focus events into a single scan on the next editor idle, instead of running
+        // a full project scan synchronously on every event (which stalls ordinary scene editing while the window is open).
+        private void ScheduleRescan()
+        {
+            if (pendingRescan)
+                return;
+
+            pendingRescan = true;
+            EditorApplication.delayCall += () =>
+            {
+                pendingRescan = false;
+                if (this == null) // window closed before the callback fired
+                    return;
+                Rescan();
+                Repaint();
+            };
         }
 
         [MenuItem("Vex/Augment Doctor")]
@@ -86,10 +107,7 @@ namespace Vex.Inspector.Editor
         private void OnHierarchyChanged()
         {
             if (autoRescan)
-            {
-                Rescan();
-                Repaint();
-            }
+                ScheduleRescan();
         }
 
         private void Rescan()
